@@ -6,11 +6,14 @@ import seaborn as sns
 import io, base64
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
+import os
 
 app = Flask(__name__)
 
-# Load dataset
-df = pd.read_csv("dataset.csv")
+# Load dataset - ubah path relatif
+current_dir = os.path.dirname(os.path.abspath(__file__))
+dataset_path = os.path.join(current_dir, "dataset.csv")
+df = pd.read_csv(dataset_path)
 
 # One-hot encoding untuk lokasi
 df = pd.get_dummies(df, columns=["Lokasi"], drop_first=True)
@@ -78,4 +81,5 @@ def index():
     return render_template("index.html", prediction=prediction, plot_url=plot_url, prediction_table=prediction_table)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
