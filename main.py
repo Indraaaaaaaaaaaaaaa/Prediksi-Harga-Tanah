@@ -1,87 +1,81 @@
-import sys
-import locale
-import warnings
-import os
-
-warnings.filterwarnings('ignore')
-
-# Set encoding
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout.reconfigure(encoding='utf-8')
-
-try:
-    locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-except:
-    pass
-
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request
 import numpy as np
-from sklearn.linear_model import LinearRegression
+import pandas as pd
 import matplotlib.pyplot as plt
-import io
-import base64
+import seaborn as sns
+import io, base64
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
 
 app = Flask(__name__)
 
-# Data training untuk setiap kota (dummy data)
-data = {
-    'Jakarta': {
-        'slope': 10,
-        'intercept': 500
-    },
-    'Bandung': {
-        'slope': 9,
-        'intercept': 450
-    },
-    'Tangerang': {
-        'slope': 8,
-        'intercept': 400
-    }
-}
+# Load dataset
+df = pd.read_csv("dataset.csv")
 
-@app.route('/')
-def home():
-    return render_template('index.html')
+# One-hot encoding untuk lokasi
+df = pd.get_dummies(df, columns=["Lokasi"], drop_first=True)
 
-@app.route('/predict', methods=['POST'])
-def predict():
-    # Mengambil input dari form
-    luas_tanah = float(request.form['luas_tanah'])
-    lokasi = request.form['lokasi']
-    
-    # Menghitung prediksi
-    harga = data[lokasi]['slope'] * luas_tanah + data[lokasi]['intercept']
-    
-    # Membuat plot
-    plt.figure(figsize=(10, 6))
-    
-    # Plot untuk setiap kota
-    x = np.linspace(0, 500, 100)
-    for kota in data.keys():
-        y = data[kota]['slope'] * x + data[kota]['intercept']
-        plt.plot(x, y, label=kota)
-    
-    # Plot titik prediksi
-    plt.scatter(luas_tanah, harga, color='green', label='Prediksi Anda')
-    
-    plt.xlabel('Luas Tanah (m²)')
-    plt.ylabel('Harga Rumah (Juta Rupiah)')
-    plt.title('Hasil Prediksi')
-    plt.legend()
-    plt.grid(True)
-    
-    # Konversi plot ke base64
-    img = io.BytesIO()
-    plt.savefig(img, format='png', bbox_inches='tight')
-    img.seek(0)
-    plot_url = base64.b64encode(img.getvalue()).decode()
-    plt.close()
-    
-    return jsonify({
-        'prediksi': f"Rp {harga:.2f} juta",
-        'plot': plot_url
-    })
+# Pisahkan variabel independen (X) dan dependen (Y)
+X = df.drop(columns=["Harga_Rumah"])
+Y = df["Harga_Rumah"]
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+# Bagi dataset menjadi training dan testing
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
+
+# Buat model regresi linear
+model = LinearRegression()
+model.fit(X_train, Y_train)
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    prediction = None
+    plot_url = None
+    prediction_table = None
+
+    if request.method == "POST":
+        luas_tanah = float(request.form["luas_tanah"])
+        lokasi = request.form["lokasi"]
+
+        # One-hot encoding untuk input user
+        lokasi_encoded = [0, 0]  # Default: Bojongloa Kidul
+        if lokasi == "Arcamanik":
+            lokasi_encoded = [1, 0]
+        elif lokasi == "Cibiru":
+            lokasi_encoded = [0, 1]
+
+        # Prediksi harga rumah
+        input_data = np.array([luas_tanah] + lokasi_encoded).reshape(1, -1)
+        prediction = model.predict(input_data)[0]
+
+        # Visualisasi hasil prediksi
+        plt.figure(figsize=(8, 5))
+        sns.scatterplot(x=X_test["Luas_Tanah"], y=Y_test, color="blue", label="Data Aktual")
+        sns.lineplot(x=X_test["Luas_Tanah"], y=model.predict(X_test), color="red", label="Prediksi")
+        plt.xlabel("Luas Tanah (m2)")
+        plt.ylabel("Harga Rumah (Miliar Rupiah)")
+        plt.title("Prediksi Harga Rumah")
+        plt.legend()
+
+        img = io.BytesIO()
+        plt.savefig(img, format="png")
+        img.seek(0)
+        plot_url = base64.b64encode(img.getvalue()).decode()
+        plt.close()
+
+        # Buat tabel prediksi dengan styling yang lebih baik
+        prediction_data = {
+            'Luas Tanah (m²)': [f"{luas_tanah:,.0f}"],
+            'Lokasi': [lokasi],
+            'Prediksi Harga (Miliar)': [f"Rp {prediction:,.2f}"]
+        }
+        prediction_table = pd.DataFrame(prediction_data).to_html(
+            classes='table table-bordered table-hover table-striped text-center',
+            justify='center',
+            index=False,
+            escape=False
+        )
+
+    return render_template("index.html", prediction=prediction, plot_url=plot_url, prediction_table=prediction_table)
+
+if __name__ == "__main__":
+    app.run(debug=True)
